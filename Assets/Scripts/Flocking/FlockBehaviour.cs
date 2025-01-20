@@ -2,7 +2,13 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using Unity.Jobs;
+using UnityEngine.Jobs;
+using Unity.Burst;
+using Unity.Mathematics;
+using Unity.Collections;
 
+[BurstCompile]
 public class FlockBehaviour : MonoBehaviour
 {
   List<Obstacle> mObstacles = new List<Obstacle>();
@@ -22,6 +28,7 @@ public class FlockBehaviour : MonoBehaviour
   public int BatchSize = 100;
 
   public List<Flock> flocks = new List<Flock>();
+
   void Reset()
   {
     flocks = new List<Flock>()
@@ -35,8 +42,8 @@ public class FlockBehaviour : MonoBehaviour
     // Randomize obstacles placement.
     for(int i = 0; i < Obstacles.Length; ++i)
     {
-      float x = Random.Range(Bounds.bounds.min.x, Bounds.bounds.max.x);
-      float y = Random.Range(Bounds.bounds.min.y, Bounds.bounds.max.y);
+      float x = UnityEngine.Random.Range(Bounds.bounds.min.x, Bounds.bounds.max.x);
+      float y = UnityEngine.Random.Range(Bounds.bounds.min.y, Bounds.bounds.max.y);
       Obstacles[i].transform.position = new Vector3(x, y, 0.0f);
       Obstacle obs = Obstacles[i].AddComponent<Obstacle>();
       Autonomous autono = Obstacles[i].AddComponent<Autonomous>();
@@ -62,8 +69,8 @@ public class FlockBehaviour : MonoBehaviour
   {
     for(int i = 0; i < flock.numBoids; ++i)
     {
-      float x = Random.Range(Bounds.bounds.min.x, Bounds.bounds.max.x);
-      float y = Random.Range(Bounds.bounds.min.y, Bounds.bounds.max.y);
+      float x = UnityEngine.Random.Range(Bounds.bounds.min.x, Bounds.bounds.max.x);
+      float y = UnityEngine.Random.Range(Bounds.bounds.min.y, Bounds.bounds.max.y);
 
       AddBoid(x, y, flock);
     }
@@ -94,8 +101,8 @@ public class FlockBehaviour : MonoBehaviour
   {
     for(int i = 0; i < count; ++i)
     {
-      float x = Random.Range(Bounds.bounds.min.x, Bounds.bounds.max.x);
-      float y = Random.Range(Bounds.bounds.min.y, Bounds.bounds.max.y);
+      float x = UnityEngine.Random.Range(Bounds.bounds.min.x, Bounds.bounds.max.x);
+      float y = UnityEngine.Random.Range(Bounds.bounds.min.y, Bounds.bounds.max.y);
 
       AddBoid(x, y, flocks[0]);
     }
@@ -297,7 +304,7 @@ public class FlockBehaviour : MonoBehaviour
       for (int i = 0; i < Obstacles.Length; ++i)
       {
         Autonomous autono = Obstacles[i].GetComponent<Autonomous>();
-        float rand = Random.Range(0.0f, 1.0f);
+        float rand = UnityEngine.Random.Range(0.0f, 1.0f);
         autono.TargetDirection.Normalize();
         float angle = Mathf.Atan2(autono.TargetDirection.y, autono.TargetDirection.x);
 
@@ -317,7 +324,7 @@ public class FlockBehaviour : MonoBehaviour
         autono.TargetDirection.Normalize();
         //Debug.Log(autonomousList[i].TargetDirection);
 
-        float speed = Random.Range(1.0f, autono.MaxSpeed);
+        float speed = UnityEngine.Random.Range(1.0f, autono.MaxSpeed);
         autono.TargetSpeed += speed;
         autono.TargetSpeed /= 2.0f;
       }
@@ -335,7 +342,7 @@ public class FlockBehaviour : MonoBehaviour
           List<Autonomous> autonomousList = flock.mAutonomous;
           for (int i = 0; i < autonomousList.Count; ++i)
           {
-            float rand = Random.Range(0.0f, 1.0f);
+            float rand = UnityEngine.Random.Range(0.0f, 1.0f);
             autonomousList[i].TargetDirection.Normalize();
             float angle = Mathf.Atan2(autonomousList[i].TargetDirection.y, autonomousList[i].TargetDirection.x);
 
@@ -355,7 +362,7 @@ public class FlockBehaviour : MonoBehaviour
             autonomousList[i].TargetDirection.Normalize();
             //Debug.Log(autonomousList[i].TargetDirection);
 
-            float speed = Random.Range(1.0f, autonomousList[i].MaxSpeed);
+            float speed = UnityEngine.Random.Range(1.0f, autonomousList[i].MaxSpeed);
             autonomousList[i].TargetSpeed += speed * flock.weightSeparation;
             autonomousList[i].TargetSpeed /= 2.0f;
           }
@@ -469,4 +476,61 @@ public class FlockBehaviour : MonoBehaviour
       }
     }
   }
+}
+
+[BurstCompile]
+public struct FlockJob : IJobParallelForTransform
+{
+    [ReadOnly] public NativeArray<Vector3> positions;
+    [ReadOnly] public NativeArray<Vector3> velocities;
+    [ReadOnly] public NativeArray<float> speeds;
+    [ReadOnly] public NativeArray<int> boidIndices; // To know which boid this is
+    public float maxSpeed;
+    public float separationDistance;
+    public float alignmentWeight;
+    public float cohesionWeight;
+    public float separationWeight;
+    public NativeArray<Vector3> targetDirections;
+    public NativeArray<float> targetSpeeds;
+
+    public void Execute(int index, TransformAccess transform)
+    {
+        Vector3 currPosition = positions[index];
+        Vector3 separationDir = Vector3.zero;
+        Vector3 alignmentDir = Vector3.zero;
+        Vector3 cohesionDir = Vector3.zero;
+
+        float speed = 0.0f;
+        int count = 0;
+
+        for (int j = 0; j < positions.Length; ++j)
+        {
+            if (index != j) // Skip self
+            {
+                float dist = (currPosition - positions[j]).magnitude;
+
+                if (dist < separationDistance)
+                {
+                    Vector3 targetDirection = (currPosition - positions[j]).normalized;
+                    separationDir += targetDirection;
+                }
+
+                // Alignment and cohesion logic
+                alignmentDir += velocities[j];
+                cohesionDir += positions[j];
+                count++;
+            }
+        }
+
+        if (count > 0)
+        {
+            separationDir.Normalize();
+            alignmentDir.Normalize();
+            cohesionDir = (cohesionDir / count) - currPosition;
+
+            // Apply weights to each behavior
+            targetDirections[index] = separationDir * separationWeight + alignmentDir * alignmentWeight + cohesionDir * cohesionWeight;
+            targetSpeeds[index] = speed / count;
+        }
+    }
 }
