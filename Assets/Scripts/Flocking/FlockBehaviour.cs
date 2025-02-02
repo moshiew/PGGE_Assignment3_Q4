@@ -61,12 +61,6 @@ public class FlockBehaviour : MonoBehaviour
         {
             CreateFlock(flock);
         }
-
-        // Allocate NativeArrays for double-buffering
-        positions = new NativeArray<float3>(1000, Allocator.Persistent);
-        velocities = new NativeArray<float3>(1000, Allocator.Persistent);
-        newPositions = new NativeArray<float3>(1000, Allocator.Persistent);
-        newVelocities = new NativeArray<float3>(1000, Allocator.Persistent);
     }
 
     void CreateFlock(Flock flock)
@@ -304,7 +298,7 @@ public class FlockBehaviour : MonoBehaviour
             float3 position = Positions[index];
             float3 velocity = Velocities[index];
 
-            // Write the new position and velocity
+            // Set the new position and velocity
             NewPositions[index] = position + velocity * DeltaTime;
             NewVelocities[index] = velocity;
         }
